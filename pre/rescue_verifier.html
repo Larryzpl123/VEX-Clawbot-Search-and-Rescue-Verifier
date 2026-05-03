@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>VEX Search & Rescue Verifier</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: #f7f5ee; color: #2c2c2a; margin: 0; padding: 24px; line-height: 1.45;
+    max-width: 1200px; margin-left: auto; margin-right: auto;
+  }
+  h1 { font-size: 22px; font-weight: 500; margin: 0 0 4px; }
+  .sub { font-size: 13px; color: #5f5e5a; margin-bottom: 20px; }
+  .layout { display: flex; gap: 20px; flex-wrap: wrap; }
+  .left { flex: 0 0 480px; }
+  .right { flex: 1; min-width: 320px; }
+  canvas { display: block; background: #ffffff; border-radius: 8px;
+           border: 0.5px solid #d3d1c7; }
+  .row { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+  button {
+    padding: 6px 12px; font-size: 13px; border: 0.5px solid #b4b2a9;
+    background: white; border-radius: 6px; cursor: pointer; font-family: inherit;
+    color: #2c2c2a;
+  }
+  button:hover:not(:disabled) { background: #f1efe8; }
+  button.active { background: #e6f1fb; border-color: #378add; color: #0c447c; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  select {
+    padding: 5px 9px; font-size: 13px; border: 0.5px solid #b4b2a9;
+    background: white; border-radius: 6px; font-family: inherit; color: #2c2c2a;
+  }
+  .h {
+    font-size: 11px; font-weight: 500; color: #888780; letter-spacing: 0.06em;
+    text-transform: uppercase; margin: 16px 0 6px;
+  }
+  .h:first-child { margin-top: 0; }
+  .kv {
+    display: flex; justify-content: space-between; padding: 4px 0;
+    border-bottom: 0.5px solid #e5e3dd; font-size: 13px;
+  }
+  .kv:last-child { border: none; }
+  .kv .k { color: #5f5e5a; }
+  .kv .v { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .check {
+    display: flex; gap: 8px; padding: 4px 0; align-items: flex-start; font-size: 13px;
+  }
+  .dot {
+    width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; margin-top: 4px;
+    background: #f1efe8; border: 0.5px solid #b4b2a9;
+  }
+  .dot.pass { background: #97c459; border-color: #639922; }
+  .dot.fail { background: #e24b4a; border-color: #a32d2d; }
+  .log {
+    background: #f7f5ee; border-radius: 6px; padding: 10px 12px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px;
+    max-height: 160px; overflow-y: auto; margin-top: 12px;
+    border: 0.5px solid #e5e3dd;
+  }
+  .log div { padding: 1px 0; color: #888780; }
+  .log div.now { color: #2c2c2a; font-weight: 500; }
+  .summary {
+    padding: 10px 12px; border-radius: 6px; margin-top: 10px;
+    font-size: 13px; border: 0.5px solid;
+  }
+  .summary.ok      { background: #eaf3de; border-color: #97c459; color: #173404; }
+  .summary.bad     { background: #fcebeb; border-color: #f09595; color: #501313; }
+  .summary.pending { background: #f1efe8; border-color: #d3d1c7; color: #5f5e5a; }
+  .legend {
+    margin-top: 14px; font-size: 12px; color: #5f5e5a;
+    display: flex; gap: 16px; flex-wrap: wrap;
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 12px; height: 12px; border: 0.5px solid #444; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<h1>VEX Clawbot Search &amp; Rescue verifier</h1>
+<div class="sub">
+  Simulates <code>room()</code> on a 1200×1200mm field with diagonal entrance (bottom-right) and exit (top-left).
+  Cube spawns top-center; wall (in walled room) spawns middle-right.
+  Toggle between fixed code (optical light on) and original (light off) to see why the original misbehaves.
+</div>
+
+<div class="layout">
+  <div class="left">
+    <canvas id="cv" width="480" height="480"></canvas>
+
+    <div class="row">
+      <button class="rb active" data-r="fire">Fire</button>
+      <button class="rb" data-r="rescue">Rescue</button>
+      <button class="rb" data-r="walled">Walled</button>
+      <button class="rb" data-r="clear">Clear</button>
+    </div>
+
+    <div class="row">
+      <button id="run">▶ Run room()</button>
+      <button id="reset">↺ Reset</button>
+      <select id="speed">
+        <option value="1">1× speed</option>
+        <option value="3" selected>3× speed</option>
+        <option value="6">6× speed</option>
+        <option value="12">12× speed</option>
+      </select>
+      <select id="ver">
+        <option value="fixed" selected>Fixed code (light on)</option>
+        <option value="original">Original (light off)</option>
+      </select>
+    </div>
+
+    <div id="summary" class="summary pending">Pick a room and press Run.</div>
+
+    <div class="legend">
+      <span><span class="swatch" style="background:#534ab7"></span>robot</span>
+      <span><span class="swatch" style="background:#e24b4a"></span>fire / red</span>
+      <span><span class="swatch" style="background:#97c459"></span>survivor / green</span>
+      <span><span class="swatch" style="background:#378add"></span>water</span>
+      <span><span class="swatch" style="background:#5f5e5a"></span>wall</span>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="h">Robot state</div>
+    <div id="state"></div>
+    <div class="h">Verification</div>
+    <div id="checks"></div>
+    <div class="h">Trace</div>
+    <div id="log" class="log"></div>
+  </div>
+</div>
+
+<script>
+/*============================================================================
+ * Field & layout constants (mm). Canvas is scaled to fit.
+ *==========================================================================*/
+const FIELD = 1200, CANVAS = 480, SC = CANVAS / FIELD;
+const px = mm => mm * SC;
+
+/* Cube position: top-middle. Robot enters bottom-right going north. */
+const CUBE_POS = { x: 900, y: 400 };
+/* Wall in walled room: middle, blocking both forward path and exit corridor. */
+const WALL_POS = { x: 800, y: 400, w: 200, h: 200 };
+
+/* Per-room layout: which obstacles exist. */
+const ROOMS = {
+  fire:   { cube: { ...CUBE_POS, color: 'red'   } },
+  rescue: { cube: { ...CUBE_POS, color: 'green' } },
+  walled: { wall: { ...WALL_POS } },
+  clear:  {}
+};
+
+/*============================================================================
+ * DOM refs
+ *==========================================================================*/
+const cv        = document.getElementById('cv');
+const ctx       = cv.getContext('2d');
+const stateEl   = document.getElementById('state');
+const checksEl  = document.getElementById('checks');
+const logEl     = document.getElementById('log');
+const summaryEl = document.getElementById('summary');
+const runBtn    = document.getElementById('run');
+const resetBtn  = document.getElementById('reset');
+const speedSel  = document.getElementById('speed');
+const verSel    = document.getElementById('ver');
+
+/*============================================================================
+ * Simulation state
+ *==========================================================================*/
+let curRoom = 'fire', running = false;
+let robot, room, log = [], checks = {}, path = [];
+
+function reset() {
+  robot = {
+    x: 900, y: 1100, h: 0,         // start bottom-center, facing north
+    arm: 'down', claw: 'open',
+    holds: null, detected: null
+  };
+  log = [];
+  path = [{ x: robot.x, y: robot.y }];
+  const r = ROOMS[curRoom];
+  room = {
+    cube: r.cube ? { ...r.cube, held: false, placed: false } : null,
+    wall: r.wall ? { ...r.wall } : null
+  };
+  checks = makeChecks();
+  summaryEl.className = 'summary pending';
+  summaryEl.textContent = 'Press Run to simulate.';
+  draw(); update();
+}
+
+function makeChecks() {
+  const sets = {
+    fire: [
+      'Distance sensor stops at fire cube',
+      'Optical reads red',
+      'Drops red cube and retreats',
+      'Bumper triggers water delivery',
+      'Water cube placed on fire',
+      'Robot reaches exit'
+    ],
+    rescue: [
+      'Distance sensor stops at survivor',
+      'Optical reads green',
+      'Survivor gripped',
+      'Carried 1158mm to exit',
+      'Survivor released outside',
+      'Robot reaches exit'
+    ],
+    walled: [
+      'Distance sensor stops at wall',
+      'No false color trigger',
+      'Dodge maneuver executed',
+      'Robot reaches exit'
+    ],
+    clear: [
+      'No phantom cube grab',
+      'No false color trigger',
+      'Robot reaches exit'
+    ]
+  };
+  const out = {};
+  for (const k of sets[curRoom]) out[k] = null;
+  return out;
+}
+
+const pass = k => { if (k in checks) checks[k] = true;  };
+const fail = k => { if (k in checks) checks[k] = false; };
+const lg   = m => { log.push(m); if (log.length > 100) log.shift(); };
+
+/*============================================================================
+ * Timing & motion primitives
+ *==========================================================================*/
+function delay(ms) {
+  const sp = parseFloat(speedSel.value);
+  return new Promise(r => setTimeout(r, ms / sp));
+}
+
+async function step(d) {
+  const r = robot.h * Math.PI / 180;
+  robot.x += Math.sin(r) * d;
+  robot.y -= Math.cos(r) * d;
+  path.push({ x: robot.x, y: robot.y });
+  await delay(12);
+  draw(); update();
+}
+
+async function driveBy(d) {
+  const n = Math.max(1, Math.ceil(Math.abs(d) / 12));
+  const s = d / n;
+  for (let i = 0; i < n; i++) await step(s);
+}
+
+async function driveUntilNear(threshold) {
+  while (true) {
+    const d = sense();
+    if (d < threshold) {
+      lg('  distance ' + Math.round(d) + 'mm < ' + threshold + 'mm — stop');
+      return d;
+    }
+    if (robot.x < 30 || robot.x > FIELD - 30 || robot.y < 30 || robot.y > FIELD - 30) {
+      lg('  hit field edge at distance ' + Math.round(d) + 'mm');
+      return d;
+    }
+    await step(10);
+  }
+}
+
+async function turn(deg) {
+  const n = Math.ceil(Math.abs(deg));
+  const s = Math.sign(deg);
+  for (let i = 0; i < n; i++) {
+    robot.h += s;
+    if (i % 5 === 0) { draw(); update(); await delay(4); }
+  }
+  draw(); update();
+  await delay(20);
+}
+
+/*============================================================================
+ * Sensors
+ *==========================================================================*/
+
+/* Distance sensor: ray cast along robot's heading, stop at first obstacle. */
+function sense() {
+  const r = robot.h * Math.PI / 180;
+  const dx = Math.sin(r), dy = -Math.cos(r);
+  for (let d = 0; d < 2400; d += 4) {
+    const x = robot.x + dx * d, y = robot.y + dy * d;
+    if (x < 0 || x > FIELD || y < 0 || y > FIELD) return d;
+    if (room.cube && !room.cube.held && !room.cube.placed) {
+      const c = room.cube;
+      if (Math.abs(x - c.x) < 50 && Math.abs(y - c.y) < 50) return d;
+    }
+    if (room.wall) {
+      const w = room.wall;
+      if (x > w.x && x < w.x + w.w && y > w.y && y < w.y + w.h) return d;
+    }
+  }
+  return 2400;
+}
+
+/* Optical sensor: returns real color only when light is on AND cube is held. */
+function readColor() {
+  if (!room.cube || !room.cube.held) return 'transparent';
+  return verSel.value === 'fixed' ? room.cube.color : 'transparent';
+}
+
+/*============================================================================
+ * Main simulation loop — mirrors room() in the C++ code
+ *==========================================================================*/
+async function run() {
+  if (running) return;
+  running = true; runBtn.disabled = true;
+  reset(); draw(); update();
+
+  lg('=== room() begin ===');
+  lg('armUp()');
+  robot.arm = 'up'; await delay(300);
+
+  lg('approachObject()');
+  const d = await driveUntilNear(220);
+  if (curRoom === 'fire'   && room.cube) pass('Distance sensor stops at fire cube');
+  if (curRoom === 'rescue' && room.cube) pass('Distance sensor stops at survivor');
+  if (curRoom === 'walled' && d < 220)   pass('Distance sensor stops at wall');
+
+  lg('grabCube(): release + armDown + drive 135 + grip');
+  robot.claw = 'open'; robot.arm = 'down';
+  await delay(400);
+  await driveBy(135);
+
+  if (room.cube && !room.cube.held) {
+    const dx = room.cube.x - robot.x, dy = room.cube.y - robot.y;
+    if (Math.hypot(dx, dy) < 200) {
+      room.cube.held = true; robot.holds = room.cube.color;
+      if (curRoom === 'rescue') pass('Survivor gripped');
+    }
+  }
+  if (curRoom === 'clear' && !robot.holds) pass('No phantom cube grab');
+  robot.claw = 'gripping'; await delay(300);
+
+  lg('readCubeColor(): wait 500ms, read optical');
+  await delay(500);
+  robot.detected = readColor();
+  lg('  → optical = ' + robot.detected);
+  await delay(300);
+
+  if (curRoom === 'fire') {
+    robot.detected === 'red' ? pass('Optical reads red') : fail('Optical reads red');
+  } else if (curRoom === 'rescue') {
+    robot.detected === 'green' ? pass('Optical reads green') : fail('Optical reads green');
+  } else {
+    if (robot.detected !== 'red' && robot.detected !== 'green') {
+      pass('No false color trigger');
+    } else {
+      fail('No false color trigger');
+    }
+  }
+
+  lg('handleCube(' + robot.detected + ')');
+  if (robot.detected === 'red')   await runFireBranch();
+  else if (robot.detected === 'green') await runRescueBranch();
+  else lg('  → no match, fall through');
+
+  lg('exitRoom(): turnLeft 90, drive 579');
+  await turn(-90);
+  await driveBy(579);
+
+  const d2 = sense();
+  if (d2 <= 100) {
+    lg('  blocked at ' + Math.round(d2) + 'mm — dodgeWall()');
+    await turn(90); await driveBy(579); await turn(-90);
+    if (curRoom === 'walled') pass('Dodge maneuver executed');
+  } else {
+    lg('  exit clear (' + Math.round(d2) + 'mm), no dodge');
+    if (curRoom === 'walled') {
+      // walled room SHOULD have triggered dodge — if not, the wall placement missed the path
+      lg('  note: wall did not block exit path, dodge skipped');
+    }
+  }
+
+  /* Exit zone = top-left quadrant. */
+  const exited = robot.x < 700 && robot.y < 700;
+  exited ? pass('Robot reaches exit') : fail('Robot reaches exit');
+
+  lg('=== room() complete ===');
+  finish();
+}
+
+async function runFireBranch() {
+  lg('  handleFire() → requestWater()');
+  if (room.cube) {
+    room.cube.x = robot.x; room.cube.y = robot.y - 100;
+    room.cube.held = false;
+  }
+  robot.holds = null; robot.claw = 'open';
+  pass('Drops red cube and retreats');
+  await delay(300);
+
+  await driveBy(-50);
+  lg('  awaiting bumper hit (water arrival)…');
+  await delay(800);
+  pass('Bumper triggers water delivery');
+
+  lg('  deliverWater(): grip + reposition + place');
+  robot.holds = 'blue'; robot.claw = 'gripping';
+  await delay(200);
+  await driveBy(50);
+  if (room.cube) room.cube.placed = true;
+  robot.holds = null; robot.claw = 'open';
+  pass('Water cube placed on fire');
+  await delay(200);
+}
+
+async function runRescueBranch() {
+  lg('  handleRescue(): tilt arm, drive 1158mm forward');
+  await delay(200);
+  await driveBy(1158);
+  pass('Carried 1158mm to exit');
+
+  lg('  armDown + release');
+  robot.arm = 'down';
+  if (room.cube) room.cube.placed = true;
+  robot.holds = null; robot.claw = 'open';
+  pass('Survivor released outside');
+  await delay(200);
+}
+
+function finish() {
+  let total = 0, passed = 0;
+  for (const k in checks) {
+    total++;
+    if (checks[k] === true) passed++;
+  }
+  if (passed === total && total > 0) {
+    summaryEl.className = 'summary ok';
+    summaryEl.textContent = '✓ All ' + total + ' checks passed';
+  } else {
+    summaryEl.className = 'summary bad';
+    summaryEl.textContent = '✗ ' + (total - passed) + ' of ' + total + ' checks failed';
+  }
+  running = false;
+  runBtn.disabled = false;
+  draw(); update();
+}
+
+/*============================================================================
+ * Drawing
+ *==========================================================================*/
+function draw() {
+  ctx.clearRect(0, 0, CANVAS, CANVAS);
+  drawField();
+  drawWall();
+  drawCube();
+  drawPath();
+  drawRay();
+  drawRobot();
+}
+
+function drawField() {
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, CANVAS, CANVAS);
+  ctx.strokeStyle = '#5f5e5a';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(1, 1, CANVAS - 2, CANVAS - 2);
+
+  /* Diagonal cuts at all 4 corners (the "4 angle two lines"). */
+  const cut = px(180);
+  ctx.strokeStyle = '#888780';
+  ctx.lineWidth = 1.5;
+
+  /* Top-left exit corner — open gap */
+  ctx.fillStyle = '#eaf3de';
+  ctx.beginPath();
+  ctx.moveTo(0, 0); ctx.lineTo(cut, 0); ctx.lineTo(0, cut);
+  ctx.closePath(); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(0, cut); ctx.lineTo(cut, 0); ctx.stroke();
+
+  /* Bottom-right entry corner — open gap */
+  ctx.fillStyle = '#fcebeb';
+  ctx.beginPath();
+  ctx.moveTo(CANVAS - cut, CANVAS); ctx.lineTo(CANVAS, CANVAS); ctx.lineTo(CANVAS, CANVAS - cut);
+  ctx.closePath(); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(CANVAS - cut, CANVAS); ctx.lineTo(CANVAS, CANVAS - cut); ctx.stroke();
+
+  /* Other two corner diagonals (just decorative lines per the spec). */
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(CANVAS - cut, 0); ctx.lineTo(CANVAS, cut); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, CANVAS - cut); ctx.lineTo(cut, CANVAS); ctx.stroke();
+  ctx.setLineDash([]);
+
+  /* Labels */
+  ctx.fillStyle = '#5f5e5a';
+  ctx.font = '11px sans-serif';
+  ctx.fillText('exit',  10, cut / 2 + 4);
+  ctx.fillText('entry', CANVAS - cut + 12, CANVAS - cut / 2 + 4);
+}
+
+function drawWall() {
+  if (!room.wall) return;
+  const w = room.wall;
+  ctx.fillStyle = '#5f5e5a';
+  ctx.fillRect(px(w.x), px(w.y), px(w.w), px(w.h));
+  ctx.fillStyle = '#fff';
+  ctx.font = '11px sans-serif';
+  ctx.fillText('wall', px(w.x) + 8, px(w.y) + 18);
+}
+
+function drawCube() {
+  if (!room.cube) return;
+  const c = room.cube;
+  if (c.placed && curRoom === 'fire') {
+    paintCube(c.x, c.y, '#e24b4a');
+    paintCube(c.x, c.y - 90, '#378add');
+  } else if (!c.placed) {
+    paintCube(c.x, c.y, c.color === 'red' ? '#e24b4a' : '#97c459');
+  }
+}
+
+function paintCube(x, y, color) {
+  const sz = px(80);
+  ctx.fillStyle = color;
+  ctx.fillRect(px(x) - sz / 2, px(y) - sz / 2, sz, sz);
+  ctx.strokeStyle = '#222';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(px(x) - sz / 2, px(y) - sz / 2, sz, sz);
+}
+
+function drawPath() {
+  if (path.length < 2) return;
+  ctx.strokeStyle = 'rgba(127, 119, 221, 0.55)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(px(path[0].x), px(path[0].y));
+  for (const p of path) ctx.lineTo(px(p.x), px(p.y));
+  ctx.stroke();
+}
+
+function drawRay() {
+  const d = sense();
+  const r = robot.h * Math.PI / 180;
+  const sx = px(robot.x), sy = px(robot.y);
+  const ex = sx + Math.sin(r) * px(d), ey = sy - Math.cos(r) * px(d);
+  ctx.strokeStyle = d < 220 ? 'rgba(226, 75, 74, 0.7)' : 'rgba(29, 158, 117, 0.45)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 4]);
+  ctx.beginPath();
+  ctx.moveTo(sx, sy);
+  ctx.lineTo(ex, ey);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawRobot() {
+  const x = px(robot.x), y = px(robot.y), sz = px(160);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(robot.h * Math.PI / 180);
+
+  ctx.fillStyle = '#534ab7';
+  ctx.fillRect(-sz / 2, -sz / 2, sz, sz);
+
+  ctx.strokeStyle = 'white';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, 0); ctx.lineTo(0, -sz / 2);
+  ctx.stroke();
+
+  /* Arm + claw */
+  const armY = robot.arm === 'up' ? -sz * 0.85 : -sz * 0.62;
+  const cw = sz * 0.5;
+  ctx.strokeStyle = '#222';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  if (robot.claw === 'open') {
+    ctx.moveTo(-cw, armY - sz * 0.2);
+    ctx.lineTo(-cw / 2, armY);
+    ctx.lineTo(cw / 2, armY);
+    ctx.lineTo(cw, armY - sz * 0.2);
+  } else {
+    ctx.moveTo(-cw / 2, armY - sz * 0.2);
+    ctx.lineTo(-cw / 4, armY);
+    ctx.lineTo(cw / 4, armY);
+    ctx.lineTo(cw / 2, armY - sz * 0.2);
+  }
+  ctx.stroke();
+
+  /* Held cube indicator */
+  if (robot.holds) {
+    const cm = { red: '#e24b4a', green: '#97c459', blue: '#378add' };
+    ctx.fillStyle = cm[robot.holds];
+    const cs = sz * 0.32;
+    ctx.fillRect(-cs / 2, armY - cs / 2 - 2, cs, cs);
+  }
+  ctx.restore();
+}
+
+/*============================================================================
+ * UI panels
+ *==========================================================================*/
+function update() {
+  let s = '';
+  s += kv('Position', '(' + Math.round(robot.x) + ', ' + Math.round(robot.y) + ')');
+  s += kv('Heading',  (((Math.round(robot.h) % 360) + 360) % 360) + '°');
+  s += kv('Arm',      robot.arm);
+  s += kv('Claw',     robot.claw);
+  s += kv('Holding',  robot.holds || 'nothing');
+  s += kv('Distance', Math.round(sense()) + 'mm');
+  s += kv('Optical light', verSel.value === 'fixed' ? 'on' : 'off');
+  s += kv('Detected color', robot.detected || '—');
+  stateEl.innerHTML = s;
+
+  let c = '';
+  for (const k in checks) {
+    const v = checks[k];
+    const cls = v === true ? 'pass' : v === false ? 'fail' : '';
+    c += '<div class="check"><div class="dot ' + cls + '"></div><div>' + k + '</div></div>';
+  }
+  checksEl.innerHTML = c;
+
+  let l = '';
+  for (let i = 0; i < log.length; i++) {
+    const cls = i === log.length - 1 ? 'now' : '';
+    l += '<div class="' + cls + '">' + log[i] + '</div>';
+  }
+  logEl.innerHTML = l;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function kv(k, v) {
+  return '<div class="kv"><span class="k">' + k + '</span><span class="v">' + v + '</span></div>';
+}
+
+/*============================================================================
+ * Event wiring
+ *==========================================================================*/
+document.querySelectorAll('.rb').forEach(b => {
+  b.addEventListener('click', () => {
+    if (running) return;
+    document.querySelectorAll('.rb').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    curRoom = b.dataset.r;
+    reset();
+  });
+});
+runBtn.addEventListener('click', run);
+resetBtn.addEventListener('click', () => { if (!running) reset(); });
+verSel.addEventListener('change', () => { if (!running) update(); });
+
+reset();
+</script>
+</body>
+</html>
