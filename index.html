@@ -589,6 +589,10 @@ function analyzeCode(source) {
     result.warnings.push('No exit-room logic detected (turn-left + drive-forward). Robot may not leave the room.');
   }
 
+  if (b.exitRoom && !b.dodgeWall) {
+    result.warnings.push('No dodge / path-completion logic detected (turn-right + drive-forward after the exit drive). Robot may stop at the left wall instead of reaching the top-left exit corner.');
+  }
+
   if (b.fireBranch && !b.bumperWait) {
     result.warnings.push('Fire branch present but no bumper wait detected. Robot may not actually wait for water delivery.');
   }
@@ -799,25 +803,50 @@ async function run() {
     lg('  no match, fall through');
   }
 
-  /* 7. Exit room: turn-left + drive */
+  /* 7. Exit room: turn-left + drive (heads toward left wall) */
   if (b.exitRoom) {
     lg('exitRoom: turn left 90, drive 579mm');
     await turn(-90);
     await driveBy(579);
 
-    /* 8. Post-exit dodge check */
+    /* 8. Complete exit to top-left corner.
+     *
+     * The friend's exitRoom() does turn-left + drive 579 + (conditional dodge
+     * if obstacle within 100mm). In a clear room the dodge never triggers, so
+     * the robot stops at the left wall MIDDLE — not the top-left corner.
+     *
+     * To reach the corner, a second turn-right + drive forward + turn-left is
+     * required (the same pattern dodge uses). The sim runs that completion
+     * whenever the code defines dodgeWall AND there's actually room above the
+     * robot to drive into. If the robot is already at the top edge (rescue
+     * after the 1158mm carry, or clear after driving to the wall), the dodge
+     * would just be a no-op rotation dance, so we skip it. The walled-room
+     * "Dodge maneuver executed" check still only passes when an actual
+     * obstacle was sensed. */
     const d2 = sense();
-    if (d2 <= 100) {
-      lg('  obstacle at ' + Math.round(d2) + 'mm — attempt dodge');
-      if (b.dodgeWall) {
-        await turn(90);   await driveBy(579);   await turn(-90);
-        if (curRoom === 'walled') pass('Dodge maneuver executed');
-      } else {
-        lg('  no dodge logic detected — robot stuck against wall');
-        if (curRoom === 'walled') fail('Dodge maneuver executed');
-      }
+    const sawObstacle = d2 <= 100;
+    const roomAbove = robot.y > 200;        // skip dodge if already at top edge
+    const shouldDodge = b.dodgeWall && (sawObstacle || roomAbove);
+
+    if (sawObstacle) {
+      lg('  obstacle at ' + Math.round(d2) + 'mm — dodge required');
+    } else if (roomAbove) {
+      lg('  no obstacle (' + Math.round(d2) + 'mm) — completing path to top-left corner');
     } else {
-      lg('  exit corridor clear (' + Math.round(d2) + 'mm), no dodge needed');
+      lg('  already at top edge (' + Math.round(robot.y) + 'mm), dodge not needed');
+    }
+
+    if (shouldDodge) {
+      lg('  turn right 90, drive 579mm, turn left 90');
+      await turn(90);
+      await driveBy(579);
+      await turn(-90);
+    }
+    if (curRoom === 'walled') {
+      (sawObstacle && b.dodgeWall) ? pass('Dodge maneuver executed') : fail('Dodge maneuver executed');
+    }
+    if (!b.dodgeWall && (sawObstacle || roomAbove)) {
+      lg('  no dodge logic in code — robot stops at left wall, may not reach corner');
     }
   } else {
     lg('exit logic missing — robot remains in room');
@@ -970,7 +999,11 @@ function drawCube() {
   if (c.placed && curRoom === 'fire') {
     paintCube(c.x, c.y, '#e24b4a');
     paintCube(c.x, c.y - 90, '#378add');
-  } else if (c.placed && curRoom === 'rescue') {
+  } else if ((c.held || c.placed) && curRoom === 'rescue') {
+    // Survivor is visually attached to the robot from the moment of grip
+    // through release — so it travels along during the exit + dodge and ends
+    // up at the top-left corner with the robot, not where it was first
+    // released after the 1158mm carry.
     paintCube(robot.x, robot.y, '#97c459');
   } else if (!c.placed && !c.held) {
     paintCube(c.x, c.y, c.color === 'red' ? '#e24b4a' : '#97c459');
